@@ -94,12 +94,30 @@ mistakes a compiler would have caught. Issues found and fixed this way:
   completed.
 - Tautological `enum < 0` comparisons in C that `-Werror` would reject.
 
-And one genuine logic bug that a compiler would *not* have caught: the render
-callback derived its frame count from the output buffer and used it to index
-the input buffer. Inside one aggregate device those agree, but treating that as
-a guarantee turns any disagreement into a read past the end of the tap buffer
-on the audio thread. It now renders `min(inputFrames, outputFrames)` and
-silences the remainder.
+And four genuine logic bugs that a compiler would *not* have caught:
+
+- **Buffer overrun on the audio thread.** The render callback derived its frame
+  count from the output buffer and used it to index the input buffer. Inside
+  one aggregate device those agree, but treating that as a guarantee turns any
+  disagreement into a read past the end of the tap buffer. It now renders
+  `min(inputFrames, outputFrames)` and silences the remainder.
+- **Routes stuck in `.suspended`.** `.startRequested` is only a legal
+  transition from `.idle` or `.failed`, so restarting a route that had been
+  suspended (a device coming back, for instance) built its tap and then never
+  reached `.running`. The state is now reset explicitly once its resources are
+  released.
+- **Callbacks silently disconnecting each other.** `AudioDeviceRegistry`,
+  `AudioProcessDiscovery`, `MasterOutputController` and `PermissionController`
+  each had a single assignable `onChange`. Both the routing engine and the view
+  model subscribe, so whichever started last unsubscribed the other — in
+  practice the engine's `start()` clobbered the view model's, and the UI would
+  have stopped hearing about hot-plugs. All four are now proper fan-out lists
+  that also deliver the current value on subscribe.
+- **Meters driving a full UI rebuild at 30 Hz.** Peaks were published on the
+  same channel as structural status, so animating two bars rebuilt every row's
+  model thirty times a second. Metering now has its own channel, and the view
+  model folds samples by maximum so Reduce Motion's slower tick loses no
+  transients.
 
 None of that is a substitute for building it. There will be more.
 

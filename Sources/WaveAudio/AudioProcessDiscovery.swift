@@ -34,7 +34,7 @@ public final class AudioProcessDiscovery: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "app.wave.process-discovery")
     private let diagnostics: Diagnostics
-    private var observers: [AudioPropertyObserver] = []
+    private var propertyObservers: [AudioPropertyObserver] = []
     private var runningObservers: [AudioObjectID: AudioPropertyObserver] = [:]
 
     private let stateLock = NSLock()
@@ -44,7 +44,19 @@ public final class AudioProcessDiscovery: @unchecked Sendable {
     /// render output straight back into a tap and build a feedback loop.
     private let ownPID = ProcessInfo.processInfo.processIdentifier
 
-    public var onChange: (([DiscoveredApp]) -> Void)?
+    /// Observers called on the discovery queue when the application list
+    /// changes. A list, not a single slot, so the routing engine and the view
+    /// model cannot disconnect each other by both subscribing.
+    private var observers: [([DiscoveredApp]) -> Void] = []
+
+    /// Registers an observer and immediately delivers the current list.
+    public func addObserver(_ handler: @escaping ([DiscoveredApp]) -> Void) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.observers.append(handler)
+            handler(self.apps)
+        }
+    }
 
     public init(diagnostics: Diagnostics = .shared) {
         self.diagnostics = diagnostics
@@ -65,7 +77,7 @@ public final class AudioProcessDiscovery: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             do {
-                self.observers.append(try AudioPropertyObserver(objectID: .system,
+                self.propertyObservers.append(try AudioPropertyObserver(objectID: .system,
                                                                 selector: kAudioHardwarePropertyProcessObjectList,
                                                                 queue: self.queue) { [weak self] in
                     self?.refresh()
@@ -79,8 +91,9 @@ public final class AudioProcessDiscovery: @unchecked Sendable {
 
     public func stop() {
         queue.sync {
-            observers.removeAll()
+            propertyObservers.removeAll()
             runningObservers.removeAll()
+            observers.removeAll()
         }
     }
 
@@ -198,7 +211,7 @@ public final class AudioProcessDiscovery: @unchecked Sendable {
         stateLock.unlock()
 
         guard changed else { return }
-        onChange?(apps)
+        for observer in observers { observer(apps) }
     }
 
     // MARK: - Naming

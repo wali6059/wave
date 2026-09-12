@@ -74,10 +74,10 @@ final class MixerViewModel: ObservableObject {
     @Published var isShowingDiagnostics = false
 
     let diagnostics = Diagnostics.shared
-    private let devices = AudioDeviceRegistry()
-    private let processes = AudioProcessDiscovery()
-    private let permissions = PermissionController()
-    private let master = MasterOutputController()
+    private let devices: AudioDeviceRegistry
+    private let processes: AudioProcessDiscovery
+    private let permissions: PermissionController
+    private let master: MasterOutputController
     private let rules: RoutingRuleStore
     private let engine: AudioRoutingEngine
 
@@ -106,10 +106,25 @@ final class MixerViewModel: ObservableObject {
         do {
             storage = FileRuleStorage(fileURL: try FileRuleStorage.defaultLocation())
         } catch {
+            // A missing Application Support directory should not stop Wave
+            // launching; it just means this session's changes are not saved.
             Diagnostics.shared.error("Rules", "Could not locate the rules file: \(error). Using memory only.")
             storage = InMemoryRuleStorage()
         }
-        self.rules = RoutingRuleStore(storage: storage)
+
+        // Built as locals first and then assigned, so the engine is handed the
+        // same instances the view model keeps without reading `self` while it
+        // is still being initialised.
+        let devices = AudioDeviceRegistry()
+        let processes = AudioProcessDiscovery()
+        let permissions = PermissionController()
+        let rules = RoutingRuleStore(storage: storage)
+
+        self.devices = devices
+        self.processes = processes
+        self.permissions = permissions
+        self.master = MasterOutputController()
+        self.rules = rules
         self.engine = AudioRoutingEngine(devices: devices,
                                          processes: processes,
                                          rules: rules,
@@ -131,19 +146,19 @@ final class MixerViewModel: ObservableObject {
             diagnostics.error("Rules", message)
         }
 
-        permissions.onChange = { [weak self] status in
+        permissions.addObserver { [weak self] status in
             Task { @MainActor in
                 self?.permissionStatus = status
                 self?.rebuildChannels()
             }
         }
-        devices.onChange = { [weak self] snapshot, _ in
+        devices.addObserver { [weak self] snapshot, _ in
             Task { @MainActor in
                 self?.outputDevices = snapshot
                 self?.rebuildChannels()
             }
         }
-        processes.onChange = { [weak self] _ in
+        processes.addObserver { [weak self] _ in
             Task { @MainActor in self?.rebuildChannels() }
         }
         engine.onStatusChange = { [weak self] statuses in
@@ -155,7 +170,7 @@ final class MixerViewModel: ObservableObject {
         engine.onMeters = { [weak self] samples in
             Task { @MainActor in self?.accumulateMeters(samples) }
         }
-        master.onChange = { [weak self] in
+        master.addObserver { [weak self] in
             Task { @MainActor in self?.refreshMaster() }
         }
 

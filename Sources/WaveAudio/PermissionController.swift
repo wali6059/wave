@@ -50,7 +50,18 @@ public final class PermissionController: @unchecked Sendable {
     /// preflight must not talk it back out of saying so.
     private var watchdogDenied = false
 
-    public var onChange: ((Status) -> Void)?
+    private var observers: [(Status) -> Void] = []
+
+    /// Registers an observer of permission changes and immediately delivers the
+    /// current status. A list rather than a single slot so the routing engine
+    /// and the view model cannot disconnect each other.
+    public func addObserver(_ handler: @escaping (Status) -> Void) {
+        lock.lock()
+        observers.append(handler)
+        let current = _status
+        lock.unlock()
+        handler(current)
+    }
 
     public init(diagnostics: Diagnostics = .shared) {
         self.diagnostics = diagnostics
@@ -120,11 +131,14 @@ public final class PermissionController: @unchecked Sendable {
         lock.lock()
         let changed = _status != status
         _status = status
+        // Copied out and called outside the lock: an observer that turns around
+        // and reads `status` would otherwise deadlock on a non-recursive lock.
+        let toNotify = changed ? observers : []
         lock.unlock()
 
         if changed {
             diagnostics.notice("Permission", "Status is now \(status.rawValue)")
-            onChange?(status)
+            for observer in toNotify { observer(status) }
         }
         return status
     }

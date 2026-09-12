@@ -117,11 +117,17 @@ public final class AudioRoutingEngine: @unchecked Sendable {
             guard let self, !self.isRunning else { return }
             self.isRunning = true
 
-            self.devices.onChange = { [weak self] snapshot, defaultUID in
+            self.devices.addObserver { [weak self] snapshot, defaultUID in
                 self?.queue.async { self?.handleDeviceChange(snapshot, defaultUID) }
             }
-            self.processes.onChange = { [weak self] apps in
+            self.processes.addObserver { [weak self] apps in
                 self?.queue.async { self?.handleProcessChange(apps) }
+            }
+            // Granting permission should start the routes that were parked
+            // waiting for it, and losing it should release them, without the
+            // UI having to remember to ask.
+            self.permissions.addObserver { [weak self] _ in
+                self?.queue.async { self?.reconcileAllLocked() }
             }
 
             self.lastDevices = self.devices.devices
@@ -164,13 +170,15 @@ public final class AudioRoutingEngine: @unchecked Sendable {
 
     /// Re-evaluates every application Wave knows about.
     public func reconcileAll() {
-        queue.async { [weak self] in
-            guard let self else { return }
-            var keys = Set(self.routes.keys)
-            for app in self.processes.apps { keys.insert(app.key) }
-            for rule in self.rules.allRules { keys.insert(rule.appKey) }
-            for key in keys { self.reconcile(key) }
-        }
+        queue.async { [weak self] in self?.reconcileAllLocked() }
+    }
+
+    private func reconcileAllLocked() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        var keys = Set(routes.keys)
+        for app in processes.apps { keys.insert(app.key) }
+        for rule in rules.allRules { keys.insert(rule.appKey) }
+        for key in keys { reconcile(key) }
     }
 
     /// Pushes a fader or mute change straight to the render thread.

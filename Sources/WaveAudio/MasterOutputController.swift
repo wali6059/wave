@@ -18,9 +18,18 @@ public final class MasterOutputController: @unchecked Sendable {
 
     private let diagnostics: Diagnostics
     private let queue = DispatchQueue(label: "app.wave.master-output")
-    private var observers: [AudioPropertyObserver] = []
+    private var propertyObservers: [AudioPropertyObserver] = []
 
-    public var onChange: (() -> Void)?
+    private var observers: [() -> Void] = []
+
+    /// Registers an observer of master volume, mute and default-device changes.
+    public func addObserver(_ handler: @escaping () -> Void) {
+        queue.async { [weak self] in self?.observers.append(handler) }
+    }
+
+    private func notify() {
+        for observer in observers { observer() }
+    }
 
     public init(diagnostics: Diagnostics = .shared) {
         self.diagnostics = diagnostics
@@ -30,11 +39,11 @@ public final class MasterOutputController: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             do {
-                self.observers.append(try AudioPropertyObserver(objectID: .system,
-                                                                selector: kAudioHardwarePropertyDefaultOutputDevice,
-                                                                queue: self.queue) { [weak self] in
+                self.propertyObservers.append(try AudioPropertyObserver(objectID: .system,
+                                                                        selector: kAudioHardwarePropertyDefaultOutputDevice,
+                                                                        queue: self.queue) { [weak self] in
                     self?.rebindDeviceObservers()
-                    self?.onChange?()
+                    self?.notify()
                 })
             } catch {
                 self.diagnostics.warning("Master", "Could not observe the default output device: \(error)")
@@ -44,23 +53,26 @@ public final class MasterOutputController: @unchecked Sendable {
     }
 
     public func stop() {
-        queue.sync { observers.removeAll() }
+        queue.sync {
+            propertyObservers.removeAll()
+            observers.removeAll()
+        }
     }
 
     deinit { stop() }
 
     private func rebindDeviceObservers() {
-        // Keep the system-level observer (index 0) and replace any per-device
+        // Keep the system-level listener (index 0) and replace any per-device
         // ones, so switching the default output does not accumulate listeners.
-        if observers.count > 1 { observers.removeSubrange(1...) }
+        if propertyObservers.count > 1 { propertyObservers.removeSubrange(1...) }
         guard let deviceID = Self.defaultOutputDeviceID else { return }
         for selector in [kAudioDevicePropertyVolumeScalar, kAudioDevicePropertyMute] {
             if let observer = try? AudioPropertyObserver(objectID: deviceID,
                                                          selector: selector,
                                                          scope: kAudioObjectPropertyScopeOutput,
                                                          queue: queue,
-                                                         handler: { [weak self] in self?.onChange?() }) {
-                observers.append(observer)
+                                                         handler: { [weak self] in self?.notify() }) {
+                propertyObservers.append(observer)
             }
         }
     }

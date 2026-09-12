@@ -23,15 +23,30 @@ public final class AudioDeviceRegistry: @unchecked Sendable {
     private let queue = DispatchQueue(label: "app.wave.device-registry")
     private let diagnostics: Diagnostics
 
-    private var observers: [AudioPropertyObserver] = []
+    private var propertyObservers: [AudioPropertyObserver] = []
     private var perDeviceObservers: [AudioObjectID: [AudioPropertyObserver]] = [:]
 
     private var _devices: [OutputDeviceSnapshot] = []
     private var _defaultOutputUID: String?
     private let stateLock = NSLock()
 
-    /// Called on the registry's queue whenever the snapshot changes.
-    public var onChange: (([OutputDeviceSnapshot], String?) -> Void)?
+    /// Observers called on the registry's queue whenever the snapshot changes.
+    ///
+    /// A list rather than a single slot: both the routing engine and the view
+    /// model need to hear about a hot-plug, and a single assignable callback
+    /// means whichever registers last silently disconnects the other.
+    private var observers: [([OutputDeviceSnapshot], String?) -> Void] = []
+
+    /// Registers an observer and immediately delivers the current snapshot, so
+    /// a late subscriber is never left waiting for the next hot-plug to learn
+    /// what is attached.
+    public func addObserver(_ handler: @escaping ([OutputDeviceSnapshot], String?) -> Void) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.observers.append(handler)
+            handler(self.devices, self.defaultOutputUID)
+        }
+    }
 
     public init(diagnostics: Diagnostics = .shared) {
         self.diagnostics = diagnostics
@@ -65,8 +80,9 @@ public final class AudioDeviceRegistry: @unchecked Sendable {
 
     public func stop() {
         queue.sync {
-            observers.removeAll()
+            propertyObservers.removeAll()
             perDeviceObservers.removeAll()
+            observers.removeAll()
         }
     }
 
@@ -74,15 +90,15 @@ public final class AudioDeviceRegistry: @unchecked Sendable {
 
     private func installSystemObservers() {
         do {
-            observers.append(try AudioPropertyObserver(objectID: .system,
-                                                       selector: kAudioHardwarePropertyDevices,
-                                                       queue: queue) { [weak self] in
+            propertyObservers.append(try AudioPropertyObserver(objectID: .system,
+                                                               selector: kAudioHardwarePropertyDevices,
+                                                               queue: queue) { [weak self] in
                 self?.diagnostics.info("Devices", "Device list changed")
                 self?.refreshLocked()
             })
-            observers.append(try AudioPropertyObserver(objectID: .system,
-                                                       selector: kAudioHardwarePropertyDefaultOutputDevice,
-                                                       queue: queue) { [weak self] in
+            propertyObservers.append(try AudioPropertyObserver(objectID: .system,
+                                                               selector: kAudioHardwarePropertyDefaultOutputDevice,
+                                                               queue: queue) { [weak self] in
                 self?.diagnostics.info("Devices", "Default output device changed")
                 self?.refreshLocked()
             })
@@ -148,7 +164,7 @@ public final class AudioDeviceRegistry: @unchecked Sendable {
         guard changed else { return }
         diagnostics.info("Devices",
                          "\(snapshots.count) output device(s); default = \(defaultUID ?? "none")")
-        onChange?(snapshots, defaultUID)
+        for observer in observers { observer(snapshots, defaultUID) }
     }
 
     // MARK: - Reading one device
