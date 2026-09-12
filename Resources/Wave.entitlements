@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	    Wave is built unsandboxed on purpose.
+
+	    Reading the Core Audio process list, resolving other processes'
+	    executable paths with proc_pidpath, and reading their bundles for
+	    names and icons are all things the App Sandbox blocks. A sandboxed
+	    build can still tap audio, but it cannot tell you whose audio it is,
+	    which is most of what a mixer is for.
+
+	    The hardened runtime stays on, and the audio-input entitlement is
+	    what lets the hardened runtime reach the audio HAL at all.
+	-->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

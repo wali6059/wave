@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>Wave</string>
+	<key>CFBundleIdentifier</key>
+	<string>app.wave.mixer</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Wave</string>
+	<key>CFBundleDisplayName</key>
+	<string>Wave</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+
+	<!-- Menu-bar only: no Dock icon, no main window. -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<key>LSMinimumSystemVersion</key>
+	<string>14.2</string>
+
+	<!--
+	    Shown in the macOS permission prompt for System Audio Recording.
+	    This key must live in the compiled Info.plist; Xcode's INFOPLIST_KEY_*
+	    build settings do not cover it, and without it macOS denies capture
+	    silently rather than prompting.
+	-->
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Wave needs to capture what your apps are playing so it can set each app's volume independently and send it to the output device you choose. Audio is processed on this Mac and never recorded or sent anywhere.</string>
+
+	<key>NSHumanReadableCopyright</key>
+	<string>Wave is a local utility. It has no accounts, no analytics and no network access.</string>
+</dict>
+</plist>
