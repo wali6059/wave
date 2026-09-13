@@ -1,6 +1,13 @@
 # Wave
 
+[![build](https://github.com/wali6059/wave/actions/workflows/build.yml/badge.svg)](https://github.com/wali6059/wave/actions/workflows/build.yml)
+
 Per-app volume and output routing for macOS, as a menu-bar utility.
+
+> **Status:** builds clean and passes 130 unit tests on macOS 15.5 / Swift 6.1.2
+> in CI, and device and process discovery are verified against the real Core
+> Audio HAL. The end-to-end audio path — capture, gain, reroute — has **not**
+> been run on real hardware yet. See [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 Set Spotify to 65% on your studio speakers, Chrome to 30% on the MacBook
 speakers, Zoom to 100% on your AirPods, and system sounds to 40% on the

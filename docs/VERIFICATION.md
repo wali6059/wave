@@ -1,162 +1,164 @@
 # Verification status
 
-Read this before trusting anything else in the repository.
+What has actually been proven, what has not, and by whom. Read this before
+trusting any claim elsewhere in the repository.
 
-## The short version
+## Summary
 
-**The audio chain has not been run.** This code was written in a Linux
-container with no macOS, no macOS SDK, no Swift toolchain and no audio
-hardware. Nothing here has been compiled, no test has been executed, and no
-sample has passed through the render callback.
+| | |
+|---|---|
+| Compiles against the macOS SDK | **Yes** — macOS 15.5 SDK, Swift 6.1.2, Xcode 16.4, clean under `-warnings-as-errors -Werror` |
+| Unit tests | **Yes** — 130 tests, 0 failures |
+| App bundle assembles and signs | **Yes** — passes `codesign --verify --deep --strict` |
+| Device and process discovery against the real HAL | **Yes** — see below |
+| **Audio captured, attenuated and rerouted** | **No. Unverified.** Needs a human at a Mac. |
+| Interface rendered | **No.** Never displayed on a screen. |
 
-The brief asked for a working application and said explicitly not to claim
-completion on compilation or mocked UI alone. So: this is not complete. It is a
-full implementation against verified API contracts, and it needs one build and
-one listening session on a Mac before anyone should believe it.
+The headline claim of this app — that it intercepts an application's audio,
+applies gain, and plays it out of a device you chose — **has not been
+demonstrated**. Everything underneath it has.
 
-## What the environment actually was
+## How this was built
+
+The code was written in a Linux container with no macOS, no macOS SDK and no
+Swift toolchain (`download.swift.org` is blocked by the session's egress
+policy), so nothing could be compiled while it was being written. Every Core
+Audio symbol was instead checked against Apple's documentation API and against
+Apple engineer Guilherme Rambo's `AudioCap` sample before use.
+
+Compilation and testing are now done by a macOS runner on GitHub Actions
+(`.github/workflows/build.yml`), which is what closed most of the gap.
+
+## What CI proves
+
+Every push runs, on `macos-15`:
+
+1. `swift build`
+2. `swift test` — **130 tests, 0 failures**
+3. `swift build -Xswiftc -warnings-as-errors -Xcc -Werror` — clean
+4. `Scripts/build-app.sh` — assembles `Wave.app`, signs it, and
+   `codesign --verify --deep --strict` reports *valid on disk* and *satisfies
+   its Designated Requirement*
+5. `PlistBuddy` confirms `NSAudioCaptureUsageDescription` survived into the
+   compiled `Info.plist` (a silent omission here is the single most common way
+   to get a silent permission denial)
+6. A smoke test that runs the spike's read-only commands
+
+Step 6 is more informative than a smoke test usually is. On the runner,
+`wave-spike list` produced:
 
 ```
-$ uname -a
-Linux vm 6.18.44-fc-v24 ... x86_64 GNU/Linux
-$ swift --version
-no swift toolchain
+Output devices
+--------------
+  Apple Virtual Sound Device *default*
+      uid=AVIODevice  channels=2  transport=builtIn
+  Null Audio Device
+      uid=NullAudioDevice_UID  channels=2  transport=virtual
+
+Audio processes (grouped by application)
+----------------------------------------
+  [idle   ] Control Center
+      key=com.apple.controlcenter  pids=313
+  [idle   ] corespeechd
+      key=com.apple.CoreSpeech  pids=368
+  [idle   ] systemstats
+      key=exec:/usr/sbin/systemstats  pids=741
+  … 9 applications in total
 ```
 
-Installing one was not possible either — `download.swift.org` is blocked by
-this session's egress policy:
+That output exercises, against the real Core Audio HAL rather than a mock:
 
-```
-"detail": "gateway answered 403 to CONNECT (policy denial or upstream failure)",
-"host": "download.swift.org:443"
-```
+- `kAudioHardwarePropertyDevices`, device UID reading, output channel counting
+  via `kAudioDevicePropertyStreamConfiguration`, transport-type mapping, and
+  default-device detection.
+- `kAudioHardwarePropertyProcessObjectList`, `kAudioProcessPropertyPID`,
+  `kAudioProcessPropertyBundleID` and `kAudioProcessPropertyIsRunningOutput`.
+- PID to friendly-name resolution (`Control Center`, not `controlcenter`).
+- The `exec:` fallback identity for a process with no bundle (`systemstats`).
+- Grouping producing one row per application.
 
-So not even the platform-independent `WaveCore` tests could be run, which is
-the part that would otherwise have executed anywhere.
+`wave-spike permission` reports `undetermined` and exits cleanly, so the TCC
+`dlopen`/`dlsym` path runs without crashing on a machine that has never been
+asked.
 
-## What *was* verified
+## What CI cannot prove
 
-Every Core Audio symbol used here was checked against Apple's live
-documentation rather than written from memory. The exact declarations were
-pulled from `developer.apple.com`'s documentation API and matched against the
-code:
+A GitHub runner has no real audio hardware, no TCC grant, no logged-in window
+server and nobody listening. So none of the following has been exercised, by
+anyone, ever:
 
-| Symbol | Verified declaration | Availability |
-|---|---|---|
-| `AudioHardwareCreateProcessTap` | `(_ inDescription: CATapDescription!, _ outTapID: UnsafeMutablePointer<AudioObjectID>!) -> OSStatus` | macOS 14.2 |
-| `AudioHardwareDestroyProcessTap` | `(_ inTapID: AudioObjectID) -> OSStatus` | macOS 14.2 |
-| `AudioHardwareCreateAggregateDevice` | `(_ inDescription: CFDictionary, _ outDeviceID: UnsafeMutablePointer<AudioObjectID>) -> OSStatus` | macOS 10.9 |
-| `AudioDeviceIOBlock` | `(UnsafePointer<AudioTimeStamp>, UnsafePointer<AudioBufferList>, UnsafePointer<AudioTimeStamp>, UnsafeMutablePointer<AudioBufferList>, UnsafePointer<AudioTimeStamp>) -> Void` | — |
-| `AudioDeviceCreateIOProcIDWithBlock` | `(UnsafeMutablePointer<AudioDeviceIOProcID?>, AudioObjectID, dispatch_queue_t?, @escaping AudioDeviceIOBlock) -> OSStatus` | macOS 10.7 |
-| `AudioObjectPropertyListenerBlock` | `(UInt32, UnsafePointer<AudioObjectPropertyAddress>) -> Void` | — |
-| `CATapDescription.init(stereoMixdownOfProcesses:)` | `[AudioObjectID]` — **not** `[NSNumber]` | class is 14.2 |
-| `CATapDescription` properties | `muteBehavior`, `isPrivate`, `isExclusive`, `isMixdown`, `isMono`, `name`, `uuid`, `processes`, `bundleIDs`, `deviceUID`, `stream` | |
-| `CATapMuteBehavior` | `.muted`, `.mutedWhenTapped`, `.unmuted` | macOS 13.0 |
-| `NSAudioCaptureUsageDescription` | Info.plist key | macOS 14.2 |
+- `AudioHardwareCreateProcessTap` actually creating a tap.
+- `muteBehavior = .mutedWhenTapped` actually silencing the source — the
+  mechanism the whole "no double audio" guarantee rests on.
+- The private aggregate device accepting a tap in its tap list.
+- The IO callback firing, and `waveRender` producing correct samples.
+- Gain being audible, ramps being click-free.
+- Audio arriving at a chosen device and only that device.
+- Teardown restoring normal playback.
+- Hot-plug recovery.
+- A single pixel of the SwiftUI interface.
 
-Confirmed present as documented: `kAudioAggregateDeviceTapListKey`,
-`kAudioAggregateDeviceTapAutoStartKey`, `kAudioAggregateDeviceIsPrivateKey`,
-`kAudioSubTapUIDKey`, `kAudioTapPropertyFormat`, `kAudioTapPropertyUID`,
-`kAudioHardwarePropertyProcessObjectList`,
-`kAudioHardwarePropertyTranslatePIDToProcessObject`,
-`kAudioProcessPropertyPID`, `kAudioProcessPropertyBundleID`,
-`kAudioProcessPropertyIsRunningOutput`.
+`docs/ACCEPTANCE.md` is the checklist for all of it.
 
-The aggregate-device dictionary shape and the tap/aggregate creation order were
-cross-checked against Apple engineer Guilherme Rambo's `AudioCap` sample
-(`github.com/insidegui/AudioCap`), which is the reference implementation for
-process taps on macOS 14.4+, and the TCC preflight approach in
-`PermissionController` follows the same SPI it uses.
+## Bugs found, and by what
 
-The single most consequential thing that research turned up is documented in
-`ARCHITECTURE.md` and handled in the code: **the System Audio Recording
-privilege is enforced silently.** Denied, every Core Audio call still returns
-`noErr` and the buffers are simply zeros. That is why `SilenceWatchdog` exists.
+**Found by static review, before any compiler ran:**
 
-## What was reviewed by hand instead of compiled
+- Render callback derived its frame count from the output buffer and used it to
+  index the input buffer — a read past the end of the tap buffer on the audio
+  thread whenever the two disagreed.
+- Restarting a suspended route left it stuck: `.startRequested` is only legal
+  from `.idle`/`.failed`, so a route resuming after its device returned built
+  its tap and never reached `.running`.
+- Four components exposed a single assignable `onChange`, and both the routing
+  engine and the view model subscribe. The engine's `start()` ran last and
+  silently disconnected the UI from every hot-plug event.
+- Metering shared a channel with structural status, rebuilding every row's
+  model 30 times a second.
 
-Since no compiler was available, the code was reviewed statically for the
-mistakes a compiler would have caught. Issues found and fixed this way:
+**Found by the compiler:**
 
-- `AudioStreamID` and `AudioObjectID` are both `UInt32`, so a second
-  `static let unknown` on the former was a redeclaration.
-- Swift's C importer maps a forward-declared struct unpredictably; the control
-  block was reshaped into the `sqlite3 *`-style `typedef struct … *Ref` that
-  maps reliably to `OpaquePointer`.
-- `for (key, var channel) in dictionary` is not valid Swift, and the loop it
-  appeared in also mutated the dictionary it was iterating.
-- `AnyShapeStyle(.secondary)` is ambiguous between `Color` and
-  `HierarchicalShapeStyle`.
-- A `@available(macOS 14.2)` API cannot be used with a 14.0 deployment target,
-  so `Package.swift` pins `.macOS("14.2")`.
-- `String(format: "%d", someInt)` passes 64 bits to a 32-bit conversion.
-- Registering a Core Audio listener touched `self` before initialisation
-  completed.
-- Tautological `enum < 0` comparisons in C that `-Werror` would reject.
+- `FormatIncompatibility` used as a `Result` failure type without conforming to
+  `Error`.
+- `withUnsafeMutableBytes` yields an optional `baseAddress`.
+- `kAudioObjectPropertyStreams` does not exist; it is
+  `kAudioDevicePropertyStreams`.
+- `error as? CustomStringConvertible` always succeeds on an existential
+  `Error`.
+- Forming an `UnsafeRawPointer` from an inout generic in the property writer.
 
-And four genuine logic bugs that a compiler would *not* have caught:
+**Found by running the tests — the one static review could never have caught:**
 
-- **Buffer overrun on the audio thread.** The render callback derived its frame
-  count from the output buffer and used it to index the input buffer. Inside
-  one aggregate device those agree, but treating that as a guarantee turns any
-  disagreement into a read past the end of the tap buffer. It now renders
-  `min(inputFrames, outputFrames)` and silences the remainder.
-- **Routes stuck in `.suspended`.** `.startRequested` is only a legal
-  transition from `.idle` or `.failed`, so restarting a route that had been
-  suspended (a device coming back, for instance) built its tap and then never
-  reached `.running`. The state is now reset explicitly once its resources are
-  released.
-- **Callbacks silently disconnecting each other.** `AudioDeviceRegistry`,
-  `AudioProcessDiscovery`, `MasterOutputController` and `PermissionController`
-  each had a single assignable `onChange`. Both the routing engine and the view
-  model subscribe, so whichever started last unsubscribed the other — in
-  practice the engine's `start()` clobbered the view model's, and the UI would
-  have stopped hearing about hot-plugs. All four are now proper fan-out lists
-  that also deliver the current value on subscribe.
-- **Meters driving a full UI rebuild at 30 Hz.** Peaks were published on the
-  same channel as structural status, so animating two bars rebuilt every row's
-  model thirty times a second. Metering now has its own channel, and the view
-  model folds samples by maximum so Reduce Motion's slower tick loses no
-  transients.
+The gain ramp never reached its target. A one-pole step is
+`delta * coefficient`; both shrink as the ramp converges, and once their
+product falls below half a ULP the addition rounds to no change. At 48 kHz with
+a 15 ms time constant the step went under half a ULP of 1.0 while `delta` was
+still ~2.1e-5 — above the 1e-5 snap threshold, so the snap never fired. The
+gain sat 2.1e-5 below unity forever, the smoother never reported settled, and
+the render loop ran ramp arithmetic on every buffer for the life of a route.
+`advance()` now detects a step that made no progress and finishes the ramp.
 
-None of that is a substitute for building it. There will be more.
+**Found by reading CI output instead of trusting its exit code:**
 
-## What you need to do
-
-```sh
-make verify
-```
-
-That builds with warnings as errors, runs the unit tests, assembles and signs
-the bundle, and checks the usage description survived into the compiled plist.
-Expect to fix some compile errors on the first pass — nobody writes this much
-Swift blind without any.
-
-Then the part no machine can do:
-
-```sh
-make list
-make spike APP_NAME="Music"
-```
-
-and listen. Then work `docs/ACCEPTANCE.md` top to bottom.
+The spike smoke test originally invoked `/usr/bin/timeout`, which does not
+exist on macOS. Both commands failed instantly, `|| true` swallowed it, and the
+step reported success having executed nothing.
 
 ## Screenshots
 
-`screenshots/` is empty, deliberately. Producing images of an interface that has
-never been rendered would mean drawing mockups and presenting them as the
-product — the exact failure the brief warned about. `Scripts/capture-screenshots.sh`
-captures the required states (permission, multiple active apps, output picker
-open, disconnected-device recovery, empty state) in both light and dark once you
-have it running.
+`screenshots/` is empty. The interface has never been rendered, and drawing
+mockups to fill the directory would misrepresent the state of the work.
+`Scripts/capture-screenshots.sh` captures the required states once Wave is
+running on a Mac.
 
-## Honest summary of confidence
+## Honest confidence
 
-| Area | Confidence | Why |
+| Area | Confidence | Basis |
 |---|---|---|
-| Core Audio API usage | High | Every signature checked against Apple's docs and a reference implementation |
-| Architecture and teardown ordering | High | Follows the documented contracts; the risky ordering is centralised and enumerated |
-| `WaveCore` logic | High | Small, pure, and covered by ~120 assertions — which have not been run |
-| Swift compiles first time | **Low** | ~4,500 lines written without a compiler |
-| SwiftUI layout is pixel-right | **Low** | Never rendered; the column budget is arithmetic, not observation |
-| Audio actually flows end to end | **Unverified** | This is the claim that needs your Mac |
+| Core Audio API usage | High | Signatures verified against Apple docs; discovery demonstrably works against the real HAL |
+| `WaveCore` logic | High | 130 tests passing |
+| Compiles and links | Certain | CI, every push |
+| Tap and aggregate creation succeed | Medium | Correct by the documented contract and by Apple's own sample, but never executed |
+| Render callback produces correct audio | Medium | Carefully reviewed, unit-testable parts tested, never run |
+| Interface looks right | Low | Never rendered; the column budget is arithmetic, not observation |
+| **End-to-end audio routing** | **Unverified** | This is the claim that needs your Mac |
