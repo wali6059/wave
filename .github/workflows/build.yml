@@ -55,15 +55,32 @@ jobs:
       - name: Assemble the app bundle
         run: ./Scripts/build-app.sh
 
-      # Smoke test only: proves the executables link and start. The runner has
-      # no audio devices, so an empty list here is the expected result and not
-      # a failure.
+      # Smoke test only: proves the executables link, launch and exit cleanly.
+      # The runner has no audio devices, so an empty list is the expected
+      # result; a crash or a hang is not, which is why the exit status is
+      # printed rather than swallowed.
       - name: Smoke test the spike
-        continue-on-error: true
         run: |
-          set -x
-          /usr/bin/timeout 60 ./build/Wave.app/Contents/MacOS/wave-spike list || true
-          /usr/bin/timeout 60 ./build/Wave.app/Contents/MacOS/wave-spike permission || true
+          set +e
+          SPIKE=./build/Wave.app/Contents/MacOS/wave-spike
+          # macOS ships no `timeout`; perl's alarm is the portable stand-in.
+          limit () { perl -e 'alarm shift; exec @ARGV' 90 "$@"; }
+
+          failed=0
+          for command in list permission; do
+            echo "----- wave-spike $command -----"
+            limit "$SPIKE" "$command"
+            status=$?
+            echo "exit status: $status"
+            # 142 is SIGALRM: the process hung past the limit.
+            if [ $status -ne 0 ]; then failed=1; fi
+          done
+
+          if [ $failed -ne 0 ]; then
+            echo "The spike did not exit cleanly. It is expected to find no audio"
+            echo "devices on a runner, but it must not crash or hang."
+            exit 1
+          fi
 
       - name: Confirm the usage description survived into the bundle
         run: |
