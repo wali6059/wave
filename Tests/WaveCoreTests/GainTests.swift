@@ -124,23 +124,58 @@ final class GainSmootherTests: XCTestCase {
         XCTAssertEqual(smoother.current, 1.0)
     }
 
-    /// The same hazard is worse with a long ramp, where the coefficient is
-    /// smaller and the step runs out of float resolution sooner.
-    func testRampSettlesEvenWithAVeryLongTimeConstant() {
-        for timeConstant: Float in [0.005, 0.015, 0.05, 0.5, 5.0] {
+    /// The hazard is worse the smaller the coefficient, because the step runs
+    /// out of float resolution while `delta` is still comparatively large.
+    ///
+    /// Sweeping the coefficient directly rather than (time constant, sample
+    /// rate) pairs is both the honest variable — the coefficient is what
+    /// governs the stall — and far cheaper, since a slow ramp expressed as a
+    /// long time constant at a high sample rate needs tens of millions of
+    /// samples just to converge.
+    func testRampSettlesForEveryPlausibleCoefficient() {
+        let coefficients: [Float] = [
+            1.0,        // no smoothing
+            0.5,
+            0.1,
+            0.01,
+            GainSmoother.coefficient(sampleRate: 48_000),   // Wave's default
+            GainSmoother.coefficient(sampleRate: 192_000),
+            1e-4,
+            1e-5,       // absurdly slow; still must terminate
+        ]
+
+        for coefficient in coefficients {
             for target: Float in [0.0, 0.25, 1.0] {
-                var smoother = makeSmoother(sampleRate: 96_000, timeConstant: timeConstant)
-                smoother.snap(to: target == 0 ? 1.0 : 0.0)
+                let start: Float = target == 0 ? 1.0 : 0.0
+                var smoother = GainSmoother(initialGain: start, coefficient: coefficient)
                 smoother.setTarget(target)
-                for _ in 0..<2_000_000 {
+
+                var iterations = 0
+                let budget = 5_000_000
+                while !smoother.isSettled && iterations < budget {
                     _ = smoother.advance()
-                    if smoother.isSettled { break }
+                    iterations += 1
                 }
+
                 XCTAssertTrue(smoother.isSettled,
-                              "tau=\(timeConstant) target=\(target) never settled "
-                              + "(stuck at \(smoother.current))")
+                              "coefficient \(coefficient) target \(target) never settled "
+                              + "(stuck at \(smoother.current) after \(iterations) samples)")
                 XCTAssertEqual(smoother.current, target)
             }
+        }
+    }
+
+    /// The ramp must approach its target from one side only. An overshoot past
+    /// 1.0 would be the one way the gain stage could clip on its own.
+    func testRampIsMonotonicAndNeverOvershoots() {
+        var smoother = makeSmoother()
+        smoother.setTarget(1.0)
+        var previous = smoother.current
+        while !smoother.isSettled {
+            let value = smoother.advance()
+            XCTAssertGreaterThanOrEqual(value, previous)
+            XCTAssertLessThanOrEqual(value, 1.0)
+            previous = value
         }
     }
 
