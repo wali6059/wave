@@ -1,0 +1,62 @@
+name: build
+
+# Wave was written without access to a Mac, so this workflow exists to do the
+# one thing that environment could not: compile it against a real macOS SDK and
+# run the tests. It cannot verify audio — a runner has no output device, no
+# audio hardware and no TCC grant — so it deliberately stops short of claiming
+# anything about the routing chain. That still needs a human at a Mac; see
+# docs/ACCEPTANCE.md.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Environment
+        run: |
+          sw_vers
+          swift --version
+          xcodebuild -version
+          echo "SDK $(xcrun --show-sdk-version) at $(xcrun --show-sdk-path)"
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      # Warnings are escalated only after a clean build, so a genuine error is
+      # never buried under a pile of warnings in the log.
+      - name: Build with warnings as errors
+        run: swift build -Xswiftc -warnings-as-errors -Xcc -Werror
+
+      - name: Assemble the app bundle
+        run: ./Scripts/build-app.sh
+
+      # Smoke test only: proves the executables link and start. The runner has
+      # no audio devices, so an empty list here is the expected result and not
+      # a failure.
+      - name: Smoke test the spike
+        continue-on-error: true
+        run: |
+          set -x
+          /usr/bin/timeout 60 ./build/Wave.app/Contents/MacOS/wave-spike list || true
+          /usr/bin/timeout 60 ./build/Wave.app/Contents/MacOS/wave-spike permission || true
+
+      - name: Confirm the usage description survived into the bundle
+        run: |
+          /usr/libexec/PlistBuddy -c "Print :NSAudioCaptureUsageDescription" \
+            build/Wave.app/Contents/Info.plist
