@@ -91,15 +91,21 @@ final class GainSmootherTests: XCTestCase {
         XCTAssertGreaterThan(first, 0.9, "one sample must not cover the whole distance")
     }
 
-    func testReachesTargetWithinAboutFiveTimeConstants() {
+    /// A one-pole ramp covers 1 - e^-n of the distance in n time constants, so
+    /// five gets to 99.3% and ten to 99.995%. Both are asserted because the
+    /// first is what makes a fader feel immediate and the second is what stops
+    /// a level sitting fractionally below its target forever.
+    func testRampConvergesAtTheExpectedRate() {
         let sampleRate = 48_000.0
         let timeConstant: Float = 0.015
+        let samplesPerTimeConstant = Int(Double(timeConstant) * sampleRate)
+
         var smoother = makeSmoother(sampleRate: sampleRate, timeConstant: timeConstant)
         smoother.setTarget(1.0)
+        for _ in 0..<(samplesPerTimeConstant * 5) { _ = smoother.advance() }
+        XCTAssertEqual(smoother.current, 1 - expf(-5), accuracy: 1e-3)
 
-        let samples = Int(Double(timeConstant) * sampleRate * 5)
-        for _ in 0..<samples { _ = smoother.advance() }
-
+        for _ in 0..<(samplesPerTimeConstant * 5) { _ = smoother.advance() }
         XCTAssertEqual(smoother.current, 1.0, accuracy: 1e-3)
     }
 

@@ -31,7 +31,7 @@ struct MixerChannel: Identifiable, Equatable {
         case .failed(let message):
             return message
         case .suspended(.destinationUnavailable):
-            if case .fellBack(let device, _, let missingName) = resolution {
+            if let resolution, case .fellBack(let device, _, let missingName) = resolution {
                 return "\(missingName ?? "Saved device") disconnected · using \(device.name)"
             }
             return "Output disconnected"
@@ -40,7 +40,7 @@ struct MixerChannel: Identifiable, Equatable {
         case .preparing:
             return "Starting…"
         default:
-            if case .fellBack(let device, _, let missingName) = resolution {
+            if let resolution, case .fellBack(let device, _, let missingName) = resolution {
                 return "\(missingName ?? "Saved device") disconnected · using \(device.name)"
             }
             return nil

@@ -36,7 +36,16 @@ jobs:
         run: swift build
 
       - name: Test
-        run: swift test
+        run: |
+          set +e
+          swift test 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          echo
+          echo "================ failures ================"
+          grep -E "XCTAssert|XCTUnwrap|: error:|Fatal error|failed \(" test.log \
+            | grep -v "passed (" | sort -u | head -40 || echo "(none)"
+          echo "=========================================="
+          exit $status
 
       # Warnings are escalated only after a clean build, so a genuine error is
       # never buried under a pile of warnings in the log.
