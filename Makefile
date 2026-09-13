@@ -75,6 +75,10 @@ verify: ## Full check: strict build, tests, then the audio spike instructions
 	@echo
 	@echo "The full checklist is in docs/ACCEPTANCE.md."
 
+.PHONY: report
+report: ## Collect build, test and environment output into wave-report.txt
+	@./Scripts/report.sh
+
 .PHONY: clean
 clean: ## Remove build products
 	swift package clean
