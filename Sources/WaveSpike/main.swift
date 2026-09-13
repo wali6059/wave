@@ -243,7 +243,7 @@ func commandRoute(_ arguments: Arguments) {
                                                    muteOriginalOutput: true))
     } catch {
         controlBlock.dispose()
-        fail("\((error as? CustomStringConvertible)?.description ?? error.localizedDescription)")
+        fail(String(describing: error))
     }
 
     out("Tap         : #\(prepared.tapID)  uuid=\(prepared.tapUUID.uuidString)")
@@ -267,7 +267,7 @@ func commandRoute(_ arguments: Arguments) {
     } catch {
         tapController.tearDown()
         controlBlock.dispose()
-        fail("\((error as? CustomStringConvertible)?.description ?? error.localizedDescription)")
+        fail(String(describing: error))
     }
 
     out("Routing. The application is now muted on its normal output and is being")

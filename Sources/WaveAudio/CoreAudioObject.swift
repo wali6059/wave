@@ -158,8 +158,9 @@ public extension AudioObjectID {
 
         var values = [T](repeating: filler, count: capacity)
         try checked("AudioObjectGetPropertyData(\(selector.fourCharString))") {
-            values.withUnsafeMutableBytes { raw in
-                AudioObjectGetPropertyData(self, &address, 0, nil, &size, raw.baseAddress)
+            values.withUnsafeMutableBytes { raw -> OSStatus in
+                guard let base = raw.baseAddress else { return kAudio_ParamError }
+                return AudioObjectGetPropertyData(self, &address, 0, nil, &size, base)
             }
         }
         let returned = Int(size) / MemoryLayout<T>.stride

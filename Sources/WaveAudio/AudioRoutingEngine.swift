@@ -333,7 +333,7 @@ public final class AudioRoutingEngine: @unchecked Sendable {
                                + "at \(VolumeCurve.percent(forPosition: rule.volume))%"
                                + (rule.isMuted ? " (muted)" : ""))
         } catch {
-            let message = (error as? CustomStringConvertible)?.description ?? error.localizedDescription
+            let message = String(describing: error)
             diagnostics.error("Engine", "Could not route \(app.displayName): \(message)")
             teardownResources(route, reason: "route failed to start")
             _ = RouteLifecycle.apply(.prepareFailed(message: message), to: &route.state)

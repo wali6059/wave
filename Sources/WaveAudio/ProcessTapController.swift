@@ -216,7 +216,7 @@ public final class ProcessTapController {
                                 scope: AudioObjectPropertyScope) throws -> AudioFormatSpec {
         let streams: [AudioObjectID]
         do {
-            streams = try deviceID.readArray(kAudioObjectPropertyStreams,
+            streams = try deviceID.readArray(kAudioDevicePropertyStreams,
                                              scope: scope,
                                              filler: AudioObjectID.unknown)
         } catch let error as CoreAudioError {
