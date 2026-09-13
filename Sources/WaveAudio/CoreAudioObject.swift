@@ -182,15 +182,26 @@ public extension AudioObjectID {
         return value != 0
     }
 
+    /// Writes a fixed-size value.
+    ///
+    /// `T` must be a trivial type — Core Audio reads the raw bytes, so passing
+    /// anything holding a reference would hand the HAL a pointer it cannot
+    /// own. `withUnsafeBytes` is used rather than `&value` both because it says
+    /// "these bytes" explicitly and because forming a raw pointer from an inout
+    /// generic is exactly what the compiler warns about.
     func write<T>(_ selector: AudioObjectPropertySelector,
                   scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal,
                   element: AudioObjectPropertyElement = kAudioObjectPropertyElementMain,
                   value: T) throws {
+        assert(_isPOD(T.self), "Core Audio properties must be trivial types")
         var address = Self.address(selector, scope: scope, element: element)
         var value = value
         try checked("AudioObjectSetPropertyData(\(selector.fourCharString))") {
-            AudioObjectSetPropertyData(self, &address, 0, nil,
-                                       UInt32(MemoryLayout<T>.size), &value)
+            withUnsafeBytes(of: &value) { raw -> OSStatus in
+                guard let base = raw.baseAddress else { return kAudio_ParamError }
+                return AudioObjectSetPropertyData(self, &address, 0, nil,
+                                                  UInt32(raw.count), base)
+            }
         }
     }
 }
