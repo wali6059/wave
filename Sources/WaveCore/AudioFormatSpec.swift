@@ -23,7 +23,7 @@ public struct AudioFormatSpec: Equatable, Sendable {
 }
 
 /// Why a tap format and a device format could not be connected.
-public enum FormatIncompatibility: Equatable, Sendable, CustomStringConvertible {
+public enum FormatIncompatibility: Error, Equatable, Sendable, CustomStringConvertible {
     case inputNotFloat32
     case outputNotFloat32
     case sampleRateMismatch(input: Double, output: Double)
