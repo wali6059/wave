@@ -20,6 +20,9 @@ public struct GainSmoother: Equatable, Sendable {
 
     /// Below this distance the ramp snaps, which keeps the tail of the
     /// exponential from producing denormal floats in the render loop.
+    ///
+    /// This is an optimisation, not the termination guarantee. The guarantee is
+    /// the no-progress check in ``advance()``; see the note there.
     public static let snapEpsilon: Float = 1e-5
 
     /// The gain currently being applied.
@@ -66,14 +69,31 @@ public struct GainSmoother: Equatable, Sendable {
     }
 
     /// Advances one sample and returns the gain to apply to it.
+    ///
+    /// The no-progress check is what actually guarantees the ramp terminates.
+    /// A one-pole step is `delta * coefficient`, and both shrink as the ramp
+    /// converges; once that product falls below half a ULP of `current`, the
+    /// addition rounds to no change and the ramp is stuck. With a 15 ms time
+    /// constant at 48 kHz the coefficient is ~0.00139, so the step drops under
+    /// half a ULP of 1.0 while `delta` is still ~2.1e-5 — comfortably above
+    /// `snapEpsilon`, which therefore never fires. The gain would sit 2.1e-5
+    /// short of unity forever: inaudible, but it means the smoother never
+    /// settles and the render loop keeps ramping on every buffer for the life
+    /// of the route.
+    ///
+    /// Comparing the result against the input catches that exactly, at any
+    /// coefficient and any magnitude, for the cost of one float comparison.
     @inline(__always)
     public mutating func advance() -> Float {
         let delta = target - current
         if delta < Self.snapEpsilon && delta > -Self.snapEpsilon {
             current = target
-        } else {
-            current += delta * coefficient
+            return current
         }
+        let next = current + delta * coefficient
+        // Float resolution reached: no further step can move `current`, so
+        // finish the ramp rather than spin against the rounding.
+        current = (next == current) ? target : next
         return current
     }
 

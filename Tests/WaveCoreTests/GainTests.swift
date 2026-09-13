@@ -109,12 +109,39 @@ final class GainSmootherTests: XCTestCase {
         XCTAssertEqual(smoother.current, 1.0, accuracy: 1e-3)
     }
 
-    func testSnapsWithinEpsilonToAvoidDenormals() {
+    /// Regression: the ramp used to stall short of its target forever.
+    ///
+    /// The per-sample step is `delta * coefficient`. Both shrink as the ramp
+    /// converges, and once the product drops below half a ULP the addition
+    /// rounds to no change. At 48 kHz that happened while `delta` was still
+    /// ~2.1e-5 — above `snapEpsilon`, so the snap never fired and the gain sat
+    /// just under unity indefinitely.
+    func testRampAlwaysReachesItsTargetExactly() {
         var smoother = makeSmoother()
         smoother.setTarget(1.0)
         for _ in 0..<100_000 { _ = smoother.advance() }
-        XCTAssertTrue(smoother.isSettled)
+        XCTAssertTrue(smoother.isSettled, "the ramp stalled instead of settling")
         XCTAssertEqual(smoother.current, 1.0)
+    }
+
+    /// The same hazard is worse with a long ramp, where the coefficient is
+    /// smaller and the step runs out of float resolution sooner.
+    func testRampSettlesEvenWithAVeryLongTimeConstant() {
+        for timeConstant: Float in [0.005, 0.015, 0.05, 0.5, 5.0] {
+            for target: Float in [0.0, 0.25, 1.0] {
+                var smoother = makeSmoother(sampleRate: 96_000, timeConstant: timeConstant)
+                smoother.snap(to: target == 0 ? 1.0 : 0.0)
+                smoother.setTarget(target)
+                for _ in 0..<2_000_000 {
+                    _ = smoother.advance()
+                    if smoother.isSettled { break }
+                }
+                XCTAssertTrue(smoother.isSettled,
+                              "tau=\(timeConstant) target=\(target) never settled "
+                              + "(stuck at \(smoother.current))")
+                XCTAssertEqual(smoother.current, target)
+            }
+        }
     }
 
     func testTargetIsClamped() {
