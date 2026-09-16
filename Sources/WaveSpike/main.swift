@@ -123,6 +123,8 @@ func printUsage() {
         Commands:
           list                       Show audio processes and output devices
           permission                 Report system audio recording status
+          selftest                   Exercise tap -> aggregate -> IO proc -> teardown
+                                     without needing anyone to listen
           route --app <name>         Capture one app, apply gain, render to a device
           help
 
@@ -354,6 +356,146 @@ func commandRoute(_ arguments: Arguments) {
     }
 }
 
+// MARK: - Self test
+
+/// Exercises the Core Audio object graph without needing anyone to listen.
+///
+/// The audible half of Wave's claim — "quieter", "out of the right speakers",
+/// "not also leaking to the wrong ones" — needs a person. The structural half
+/// does not: either `AudioHardwareCreateProcessTap` returns a tap or it does
+/// not, either the private aggregate accepts it or it does not, either the IO
+/// callback fires or it does not, either teardown is clean or it is not. Those
+/// are the riskiest parts of the app and they can be checked on any Mac,
+/// including a headless CI runner with no real audio hardware.
+///
+/// This deliberately does not assert that audio was captured. Without a TCC
+/// grant macOS delivers silence, so a runner is expected to report zero
+/// audible buffers; that is the silence watchdog working, not a failure.
+func commandSelfTest(_ arguments: Arguments) {
+    let diagnostics = Diagnostics.shared
+    let devices = AudioDeviceRegistry(diagnostics: diagnostics)
+    let processes = AudioProcessDiscovery(diagnostics: diagnostics)
+    waitForDiscovery(devices, processes)
+
+    out("Wave self-test")
+    out("==============")
+    out("Proves the Core Audio objects Wave depends on can be created, run and")
+    out("released on this machine. Does NOT prove audio is audible - that needs")
+    out("a person and a pair of speakers. See docs/ACCEPTANCE.md.")
+    out()
+
+    guard let app = processes.apps.first else {
+        fail("no audio processes found to tap")
+    }
+    guard let destination = devices.devices.first(where: \.isSystemDefault)
+            ?? devices.devices.first else {
+        fail("no output device available")
+    }
+
+    out("Tapping    : \(app.displayName)  (\(app.processObjectIDs.count) process object(s))")
+    out("Rendering  : \(destination.name)  [\(destination.uid)]")
+    out()
+
+    var tapCreated = false
+    var aggregateCreated = false
+    var ioProcStarted = false
+    var buffers: UInt64 = 0
+    var teardownClean = false
+
+    guard let controlBlock = RealtimeControlBlock() else {
+        fail("could not allocate the control block")
+    }
+    let tapController = ProcessTapController(diagnostics: diagnostics)
+
+    let prepared: ProcessTapController.Prepared
+    do {
+        prepared = try tapController.prepare(.init(processObjectIDs: app.processObjectIDs,
+                                                   destinationDeviceUID: destination.uid,
+                                                   label: "self-test",
+                                                   muteOriginalOutput: true))
+        tapCreated = prepared.tapID != AudioObjectID.unknown
+        aggregateCreated = prepared.aggregateDeviceID != AudioObjectID.unknown
+        out("tap        : #\(prepared.tapID)  uuid=\(prepared.tapUUID.uuidString)")
+        out("aggregate  : #\(prepared.aggregateDeviceID)  buffer=\(prepared.bufferFrameSize) frames")
+        out("format     : \(prepared.plan.input.channelCount)ch in -> "
+            + "\(prepared.plan.output.channelCount)ch out @ "
+            + "\(Int(prepared.plan.output.sampleRate)) Hz")
+    } catch {
+        controlBlock.dispose()
+        out()
+        out("FAILED at tap or aggregate creation:")
+        out("  \(String(describing: error))")
+        exit(1)
+    }
+
+    controlBlock.isActive = true
+    controlBlock.targetGain = GainResolver.targetGain(position: 0.5, isMuted: false)
+
+    do {
+        let renderer = try RealtimeRenderer(deviceID: prepared.aggregateDeviceID,
+                                            plan: prepared.plan,
+                                            controlBlock: controlBlock,
+                                            diagnostics: diagnostics)
+        try renderer.start()
+        ioProcStarted = true
+        out()
+        out("IO proc running for \(Int(arguments.seconds))s...")
+
+        let deadline = Date().addingTimeInterval(arguments.seconds)
+        while Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+
+        buffers = controlBlock.statistics().buffersRendered
+
+        controlBlock.isActive = false
+        renderer.stop()
+        tapController.tearDown()
+        teardownClean = true
+    } catch {
+        tapController.tearDown()
+        controlBlock.dispose()
+        out()
+        out("FAILED starting the render loop:")
+        out("  \(String(describing: error))")
+        exit(1)
+    }
+
+    let statistics = controlBlock.statistics()
+    controlBlock.dispose()
+    devices.stop()
+    processes.stop()
+
+    out()
+    out("Results")
+    out("  tap created            : \(tapCreated ? "yes" : "NO")")
+    out("  aggregate created      : \(aggregateCreated ? "yes" : "NO")")
+    out("  IO proc started        : \(ioProcStarted ? "yes" : "NO")")
+    out("  buffers rendered       : \(buffers)")
+    out("  of which silent        : \(statistics.silentBuffers)")
+    out("  format mismatches      : \(statistics.formatMismatches)")
+    out("  underruns              : \(statistics.underruns)")
+    out("  teardown completed     : \(teardownClean ? "yes" : "NO")")
+    out()
+
+    // Silence is expected without a TCC grant, so it is reported rather than
+    // failed. A callback that never fired is a different matter: it means the
+    // object graph was built and then did nothing.
+    guard tapCreated, aggregateCreated, ioProcStarted, teardownClean, buffers > 0 else {
+        out("VERDICT: the Core Audio chain did not run.")
+        exit(1)
+    }
+
+    if statistics.silentBuffers == buffers {
+        out("VERDICT: the chain ran end to end (\(buffers) buffers) but every tapped")
+        out("         buffer was silent. Expected when the tapped process is idle or")
+        out("         when system audio recording has not been granted.")
+    } else {
+        out("VERDICT: the chain ran end to end and carried audio in "
+            + "\(buffers - statistics.silentBuffers) buffer(s).")
+    }
+}
+
 // MARK: - Entry point
 
 let arguments = Arguments.parse(Array(CommandLine.arguments.dropFirst()))
@@ -361,6 +503,7 @@ switch arguments.command {
 case "list": commandList()
 case "permission": commandPermission()
 case "route": commandRoute(arguments)
+case "selftest": commandSelfTest(arguments)
 case "help": printUsage()
 default:
     printUsage()

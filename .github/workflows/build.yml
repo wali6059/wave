@@ -82,6 +82,21 @@ jobs:
             exit 1
           fi
 
+      # The structural half of the audio chain does not need a listener: either
+      # the tap and the private aggregate can be created and the IO callback
+      # fires, or they cannot. That is the riskiest code in the project and it
+      # is checkable on a headless runner. Silence is expected here (no TCC
+      # grant, no real hardware) and is reported rather than failed; a callback
+      # that never fires is a failure.
+      - name: Self-test the Core Audio chain
+        run: |
+          set +e
+          perl -e 'alarm shift; exec @ARGV' 120 \
+            ./build/Wave.app/Contents/MacOS/wave-spike selftest --seconds 6
+          status=$?
+          echo "exit status: $status"
+          exit $status
+
       - name: Confirm the usage description survived into the bundle
         run: |
           /usr/libexec/PlistBuddy -c "Print :NSAudioCaptureUsageDescription" \

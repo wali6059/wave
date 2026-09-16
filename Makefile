@@ -51,6 +51,10 @@ spike: app ## Prove the capture -> gain -> output chain. APP=<name> [DEVICE=<nam
 		$(if $(DEVICE),--device "$(DEVICE)",) \
 		--seconds $(or $(SECONDS),30)
 
+.PHONY: selftest
+selftest: app ## Exercise tap -> aggregate -> IO proc -> teardown, no listening required
+	@$(SPIKE) selftest --seconds $(or $(SECONDS),6)
+
 .PHONY: verify
 verify: ## Full check: strict build, tests, then the audio spike instructions
 	@echo "==> Strict build"
