@@ -91,7 +91,7 @@ jobs:
       - name: Self-test the Core Audio chain
         run: |
           set +e
-          perl -e 'alarm shift; exec @ARGV' 120 \
+          perl -e 'alarm shift; exec @ARGV' 60 \
             ./build/Wave.app/Contents/MacOS/wave-spike selftest --seconds 6
           status=$?
           echo "exit status: $status"

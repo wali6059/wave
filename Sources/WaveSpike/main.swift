@@ -42,7 +42,13 @@ func installSignalHandlers() {
 
 // MARK: - Output helpers
 
-func out(_ text: String = "") { print(text) }
+func out(_ text: String = "") {
+    print(text)
+    // Flush every line: when this tool is killed - by a timeout, a hang, or
+    // Ctrl-C - the output printed up to that point is the whole diagnosis.
+    // Block buffering would throw away precisely the part that mattered.
+    fflush(stdout)
+}
 func fail(_ text: String) -> Never {
     FileHandle.standardError.write(Data(("error: " + text + "\n").utf8))
     exit(1)
@@ -395,6 +401,7 @@ func commandSelfTest(_ arguments: Arguments) {
     out("Tapping    : \(app.displayName)  (\(app.processObjectIDs.count) process object(s))")
     out("Rendering  : \(destination.name)  [\(destination.uid)]")
     out()
+    out("-> AudioHardwareCreateProcessTap + AudioHardwareCreateAggregateDevice")
 
     var buffers: UInt64 = 0
 
@@ -425,14 +432,17 @@ func commandSelfTest(_ arguments: Arguments) {
     controlBlock.isActive = true
     controlBlock.targetGain = GainResolver.targetGain(position: 0.5, isMuted: false)
 
+    out()
+    out("-> AudioDeviceCreateIOProcIDWithBlock")
     do {
         let renderer = try RealtimeRenderer(deviceID: prepared.aggregateDeviceID,
                                             plan: prepared.plan,
                                             controlBlock: controlBlock,
                                             diagnostics: diagnostics)
+        out("-> AudioDeviceStart   (this is the call that triggers the macOS")
+        out("                       permission prompt on a first run)")
         try renderer.start()
-        out()
-        out("IO proc running for \(Int(arguments.seconds))s...")
+        out("-> running for \(Int(arguments.seconds))s")
 
         let deadline = Date().addingTimeInterval(arguments.seconds)
         while Date() < deadline {
@@ -441,8 +451,10 @@ func commandSelfTest(_ arguments: Arguments) {
 
         buffers = controlBlock.statistics().buffersRendered
 
+        out("-> AudioDeviceStop + AudioDeviceDestroyIOProcID")
         controlBlock.isActive = false
         renderer.stop()
+        out("-> AudioHardwareDestroyAggregateDevice + AudioHardwareDestroyProcessTap")
         tapController.tearDown()
     } catch {
         tapController.tearDown()
