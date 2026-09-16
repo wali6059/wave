@@ -5,9 +5,11 @@
 Per-app volume and output routing for macOS, as a menu-bar utility.
 
 > **Status:** builds clean and passes 130 unit tests on macOS 15.5 / Swift 6.1.2
-> in CI, and device and process discovery are verified against the real Core
-> Audio HAL. The end-to-end audio path — capture, gain, reroute — has **not**
-> been run on real hardware yet. See [docs/VERIFICATION.md](docs/VERIFICATION.md).
+> in CI. Device discovery, process discovery, and creation of the process tap
+> and its private aggregate device are all verified against the real Core Audio
+> HAL on every push. What has **not** been run is the audible half — capture,
+> gain and reroute through to a speaker. See
+> [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 Set Spotify to 65% on your studio speakers, Chrome to 30% on the MacBook
 speakers, Zoom to 100% on your AirPods, and system sounds to 40% on the
@@ -182,6 +184,11 @@ These are real, and stated plainly rather than buried.
   not disturb the others, but N routed applications means N aggregate devices.
   Fine for the handful of apps a person actually routes; not a design for
   dozens.
+- **The first route can block until the permission prompt is answered.**
+  `AudioDeviceCreateIOProcIDWithBlock` on an aggregate containing a tap is
+  where macOS decides whether Wave may receive that audio. Wave makes the call
+  on its routing queue rather than the main thread, so the interface stays
+  responsive, but the first strip may take a moment to go live.
 - **Changing an app's output device restarts its route,** which produces a
   short gap in that app's audio. Volume and mute changes do not — those are a
   single atomic store.
