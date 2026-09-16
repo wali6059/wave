@@ -241,6 +241,19 @@ public final class AudioProcessDiscovery: @unchecked Sendable {
             }
         }
 
+        // The group key may name an application none of the member processes
+        // belong to — a daemon remapped to the app it serves, like
+        // avconferenced to FaceTime. Ask the system where that application
+        // lives so the row gets the name and icon a person recognises instead
+        // of the daemon's.
+        if !key.rawValue.hasPrefix("exec:"), !key.rawValue.hasPrefix("pid:"),
+           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: key.rawValue) {
+            let name = (Bundle(url: url)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+                ?? (Bundle(url: url)?.object(forInfoDictionaryKey: "CFBundleName") as? String)
+                ?? url.deletingPathExtension().lastPathComponent
+            return (name, url, key.rawValue)
+        }
+
         // Last resort: the executable's own name. Better than an opaque bundle
         // identifier and much better than a PID.
         if let path = members.first?.executablePath {

@@ -21,6 +21,39 @@ final class ProcessGroupingTests: XCTestCase {
         XCTAssertEqual(ProcessGrouping.canonicalise("com.apple.WebKit.WebContent"), "com.apple.Safari")
     }
 
+    /// A FaceTime call's audio comes from avconferenced, not FaceTime.app.
+    /// Ungrouped it shows up as a row called "avconferenced", which is no use
+    /// to someone trying to turn down the person they are talking to.
+    func testFaceTimeCallAudioIsAttributedToFaceTime() {
+        XCTAssertEqual(ProcessGrouping.canonicalise("com.apple.avconferenced"), "com.apple.FaceTime")
+        XCTAssertEqual(ProcessGrouping.canonicalise("com.apple.TelephonyUtilities"), "com.apple.FaceTime")
+
+        let facts = AudioProcessFacts(pid: 471,
+                                      bundleID: "com.apple.avconferenced",
+                                      executablePath: "/usr/libexec/avconferenced",
+                                      isProducingOutput: true)
+        XCTAssertEqual(ProcessGrouping.groupKey(for: facts), AppGroupKey("com.apple.FaceTime"))
+    }
+
+    /// The scenario that prompted the rule: a call and a music player at once
+    /// must be two independently addressable rows.
+    func testACallAndAMusicPlayerAreSeparateRows() {
+        let processes = [
+            AudioProcessFacts(pid: 471, bundleID: "com.apple.avconferenced",
+                              executablePath: "/usr/libexec/avconferenced", isProducingOutput: true),
+            AudioProcessFacts(pid: 335, bundleID: "com.apple.TelephonyUtilities",
+                              executablePath: "/usr/libexec/callservicesd", isProducingOutput: true),
+            AudioProcessFacts(pid: 900, bundleID: "com.spotify.client",
+                              enclosingBundleID: "com.spotify.client", isProducingOutput: true),
+        ]
+        let grouped = ProcessGrouping.group(processes)
+
+        XCTAssertEqual(grouped.count, 2, "the call's two daemons must collapse into one row")
+        XCTAssertEqual(grouped[0].key, AppGroupKey("com.apple.FaceTime"))
+        XCTAssertEqual(grouped[0].members.count, 2)
+        XCTAssertEqual(grouped[1].key, AppGroupKey("com.spotify.client"))
+    }
+
     func testOrdinaryIdentifiersAreUntouched() {
         XCTAssertEqual(ProcessGrouping.canonicalise("com.spotify.client"), "com.spotify.client")
         XCTAssertEqual(ProcessGrouping.canonicalise("com.apple.Music"), "com.apple.Music")

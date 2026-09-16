@@ -80,6 +80,18 @@ public enum ProcessGrouping {
         "com.apple.WebKit.GPU": "com.apple.Safari",
         "com.apple.WebKit.WebContent": "com.apple.Safari",
         "com.apple.WebKit.Networking": "com.apple.Safari",
+
+        // FaceTime does not play its call audio itself: it goes through
+        // avconferenced, Apple's AV conferencing daemon, with callservicesd
+        // handling call setup. Left ungrouped, a FaceTime call shows up in the
+        // mixer as a row named "avconferenced", which is useless to anyone
+        // trying to turn the person they are talking to down.
+        //
+        // Same best-effort caveat as WebKit above: avconferenced also carries
+        // calls relayed from an iPhone, so "FaceTime" is the right label the
+        // overwhelming majority of the time rather than always.
+        "com.apple.avconferenced": "com.apple.FaceTime",
+        "com.apple.TelephonyUtilities": "com.apple.FaceTime",
     ]
 
     /// Suffixes that mark a bundle identifier as belonging to a helper.
