@@ -89,6 +89,9 @@ final class MixerViewModel: ObservableObject {
     /// what somebody opened the mixer for — so they live behind a disclosure.
     @Published private(set) var systemChannels: [MixerChannel] = []
     @Published var isShowingSystemProcesses = false
+    /// True when permission arrived mid-session and no tap has yet carried a
+    /// single non-silent sample. Clears itself the moment one does.
+    @Published private(set) var needsRelaunchAfterGrant = false
     @Published private(set) var outputDevices: [OutputDeviceSnapshot] = []
     @Published private(set) var permissionStatus: PermissionController.Status = .undetermined
     @Published private(set) var masterVolume: Float = 1
@@ -117,6 +120,7 @@ final class MixerViewModel: ObservableObject {
     private var saveWorkItem: DispatchWorkItem?
     private var lastMeterTick = Date()
     private var started = false
+    private var hasObservedCapturedAudio = false
 
     /// Honours Reduce Motion by slowing the meters right down instead of
     /// animating at 30 Hz. The information is still there; it just stops
@@ -253,7 +257,34 @@ final class MixerViewModel: ObservableObject {
             Task { @MainActor in
                 self?.permissionStatus = status
                 if status == .authorized { self?.engine.reconcileAll() }
+                self?.refreshRelaunchAdvice()
             }
+        }
+    }
+
+    /// macOS decides what an audio client may capture largely when that client
+    /// connects to coreaudiod. A grant that lands afterwards does not reliably
+    /// reach an existing connection, so taps are created, IO runs, every call
+    /// returns success, and nothing is captured. Relaunching is the fix.
+    private func refreshRelaunchAdvice() {
+        let advise = permissions.grantedDuringThisSession && !hasObservedCapturedAudio
+        guard advise != needsRelaunchAfterGrant else { return }
+        needsRelaunchAfterGrant = advise
+        if advise {
+            diagnostics.notice("Permission",
+                               "Permission was granted after launch. Wave must be relaunched "
+                               + "before its taps can capture anything.")
+        }
+    }
+
+    /// Starts a fresh instance and exits this one.
+    func relaunch() {
+        shutdown()
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL,
+                                           configuration: configuration) { _, _ in
+            DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
         }
     }
 
@@ -264,6 +295,7 @@ final class MixerViewModel: ObservableObject {
     func recheckPermission() {
         permissionStatus = permissions.refresh()
         if permissionStatus == .authorized { engine.reconcileAll() }
+        refreshRelaunchAdvice()
     }
 
     // MARK: - Commands
@@ -442,6 +474,14 @@ final class MixerViewModel: ObservableObject {
     /// two UI frames, so a quiet meter under Reduce Motion would be a lie
     /// rather than a calmer truth.
     private func accumulateMeters(_ samples: [AppGroupKey: MeterSample]) {
+        if !hasObservedCapturedAudio,
+           samples.values.contains(where: { $0.inputPeak > SilenceWatchdog.silenceThreshold }) {
+            // A tap has delivered real audio, so capture is genuinely working
+            // and any relaunch advice is now wrong. Retract it.
+            hasObservedCapturedAudio = true
+            needsRelaunchAfterGrant = false
+            diagnostics.notice("Permission", "Capture confirmed working; no relaunch needed")
+        }
         for (key, sample) in samples {
             guard let existing = latestMeters[key] else {
                 latestMeters[key] = sample

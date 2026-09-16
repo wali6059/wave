@@ -45,10 +45,21 @@ public final class PermissionController: @unchecked Sendable {
     private let diagnostics: Diagnostics
     private let lock = NSLock()
     private var _status: Status = .undetermined
+    /// Guards against treating the very first status resolution as a change.
+    private var _hasResolvedOnce = false
     /// Set once the watchdog has caught capture producing nothing. Sticky for
     /// the session: once Wave knows capture is blocked, a later ambiguous
     /// preflight must not talk it back out of saying so.
     private var watchdogDenied = false
+    /// True when this process started without the privilege and acquired it
+    /// while running.
+    ///
+    /// macOS decides what an audio client may capture largely when that client
+    /// first connects to coreaudiod. A grant that arrives afterwards does not
+    /// reliably reach a connection already established, so every Core Audio
+    /// call keeps returning success while the tap stays inert. Wave cannot fix
+    /// that from inside the process; it can notice it and offer to relaunch.
+    private var _grantedDuringThisSession = false
 
     private var observers: [(Status) -> Void] = []
 
@@ -70,6 +81,11 @@ public final class PermissionController: @unchecked Sendable {
     public var status: Status {
         lock.lock(); defer { lock.unlock() }
         return _status
+    }
+
+    public var grantedDuringThisSession: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _grantedDuringThisSession
     }
 
     /// Whether Wave is allowed to present a mixer that claims to work.
@@ -130,6 +146,10 @@ public final class PermissionController: @unchecked Sendable {
     private func apply(_ status: Status) -> Status {
         lock.lock()
         let changed = _status != status
+        if changed, status == .authorized, _status != .authorized, _hasResolvedOnce {
+            _grantedDuringThisSession = true
+        }
+        _hasResolvedOnce = true
         _status = status
         // Copied out and called outside the lock: an observer that turns around
         // and reads `status` would otherwise deadlock on a non-recursive lock.

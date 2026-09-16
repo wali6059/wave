@@ -37,6 +37,10 @@ struct MenuBarMixerView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             HairlineDivider()
+            if model.needsRelaunchAfterGrant {
+                relaunchBanner
+                HairlineDivider()
+            }
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -97,6 +101,32 @@ struct MenuBarMixerView: View {
         }
         .padding(.horizontal, Wave.Metrics.horizontalPadding)
         .padding(.vertical, 10)
+    }
+
+    /// Shown only when permission arrived mid-session and nothing has been
+    /// captured since. It disappears by itself the moment a tap delivers
+    /// audio, so it can never sit there contradicting a working mixer.
+    private var relaunchBanner: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "arrow.clockwise.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(Wave.overload)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Relaunch to finish setting up")
+                    .font(Wave.Type_.name)
+                Text("macOS granted access after Wave started, so its taps cannot capture anything yet.")
+                    .font(Wave.Type_.secondary)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Relaunch") { model.relaunch() }
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, Wave.Metrics.horizontalPadding)
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder

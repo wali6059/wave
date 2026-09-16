@@ -289,6 +289,12 @@ public final class AudioProcessDiscovery: @unchecked Sendable {
             return (name, url, key.rawValue)
         }
 
+        // A remapped key whose application LaunchServices could not locate:
+        // still better to say FaceTime than avconferenced.
+        if let friendly = ProcessGrouping.friendlyNames[key.rawValue] {
+            return (friendly, nil, key.rawValue)
+        }
+
         // Last resort: the executable's own name. Better than an opaque bundle
         // identifier and much better than a PID.
         if let path = members.first?.executablePath {

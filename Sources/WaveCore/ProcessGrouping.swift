@@ -94,6 +94,17 @@ public enum ProcessGrouping {
         "com.apple.TelephonyUtilities": "com.apple.FaceTime",
     ]
 
+    /// Names for group keys that no member process can supply, because the
+    /// owning application is not the one making the sound.
+    ///
+    /// A LaunchServices lookup normally finds the app and its icon, but it can
+    /// miss, and falling through to the daemon's executable name puts
+    /// "avconferenced" in the mixer where a person expects "FaceTime".
+    public static let friendlyNames: [String: String] = [
+        "com.apple.FaceTime": "FaceTime",
+        "com.apple.Safari": "Safari",
+    ]
+
     /// Suffixes that mark a bundle identifier as belonging to a helper.
     /// Ordered longest-first so `.helper.renderer` is stripped before
     /// `.helper`.
