@@ -63,6 +63,9 @@ public final class AudioRoutingEngine: @unchecked Sendable {
         /// the tap has to be rebuilt to pick up a new helper process.
         var tappedProcessObjectIDs: [AudioObjectID] = []
         var lastInputPeak: Float = 0
+        /// Last time render statistics were written to the log.
+        var lastStatisticsLog: Date = .distantPast
+        var loggedFirstAudio = false
         var meterLeft: Float = 0
         var meterRight: Float = 0
 
@@ -482,6 +485,50 @@ public final class AudioRoutingEngine: @unchecked Sendable {
 
         onMeters?(samples)
         if structuralChange { publish() }
+        logRenderStatistics()
+    }
+
+    /// Periodically records what the render thread is actually doing.
+    ///
+    /// Without this the log can say "Routing Spotify at 73%" while the tap
+    /// delivers nothing but silence, which reads as success and is the exact
+    /// failure this app is supposed to be incapable of hiding. Buffer counts
+    /// and the pre-gain peak are what distinguish "working", "capturing
+    /// silence" and "callback never fired" from one another.
+    private func logRenderStatistics() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let now = Date()
+
+        for route in routes.values where route.state.isLive {
+            guard let block = route.controlBlock else { continue }
+            let statistics = block.statistics()
+
+            // Say so the first time real audio arrives: that single line is
+            // the difference between "the tap works" and "the tap is inert".
+            if !route.loggedFirstAudio,
+               statistics.buffersRendered > statistics.silentBuffers {
+                route.loggedFirstAudio = true
+                diagnostics.notice("Render",
+                                   "\(route.key) is carrying audio through the tap")
+            }
+
+            guard now.timeIntervalSince(route.lastStatisticsLog) >= 5 else { continue }
+            route.lastStatisticsLog = now
+
+            let audible = statistics.buffersRendered - statistics.silentBuffers
+            let claimsActive = processes.app(for: route.key)?.isProducingOutput ?? false
+            diagnostics.info("Render",
+                             "\(route.key): \(statistics.buffersRendered) buffers, "
+                             + "\(audible) with audio, "
+                             + "source says playing = \(claimsActive), "
+                             + "underruns = \(statistics.underruns)")
+
+            if statistics.buffersRendered > 0, audible == 0 {
+                diagnostics.warning("Render",
+                                    "\(route.key): the IO callback is running but every tapped "
+                                    + "buffer is silent. The tap is not receiving this app's audio.")
+            }
+        }
     }
 
     // MARK: - Publishing
