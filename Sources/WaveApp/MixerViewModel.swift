@@ -22,34 +22,54 @@ struct MixerChannel: Identifiable, Equatable {
     var resolution: DeviceResolution?
     var meter = StereoMeter()
     var isSystemSounds: Bool
+    var kind: DiscoveredApp.Kind = .application
+
+    /// True when the user has asked for something Wave has to intercept to
+    /// deliver — a level other than 100%, a mute, or a specific device.
+    var wantsRouting: Bool { rule.requiresRouting }
+
+    /// The case that must never be silent: the user has set a level, but no
+    /// audio is being intercepted, so the fader is decorative.
+    var isSettingIgnored: Bool { wantsRouting && !routeState.isLive }
 
     var id: String { key.rawValue }
 
     /// The line shown under the app name when something needs saying.
+    ///
+    /// The `.idle` case is the important one. A fader set to 40% on a route
+    /// that never started looks exactly like a fader that is working, and that
+    /// is the single thing this app must never do. If Wave is not intercepting
+    /// the audio, the row says so.
     var statusMessage: String? {
+        func fallbackNote() -> String? {
+            guard let resolution, case .fellBack(let device, _, let missingName) = resolution else {
+                return nil
+            }
+            return "\(missingName ?? "Saved device") disconnected · using \(device.name)"
+        }
+
         switch routeState {
         case .failed(let message):
             return message
         case .suspended(.destinationUnavailable):
-            if let resolution, case .fellBack(let device, _, let missingName) = resolution {
-                return "\(missingName ?? "Saved device") disconnected · using \(device.name)"
-            }
-            return "Output disconnected"
+            return fallbackNote() ?? "Output disconnected"
         case .suspended(.permissionMissing):
-            return "Waiting for system audio recording permission"
+            return "Not routing · system audio recording permission is missing"
+        case .suspended(.sourceIdle):
+            return nil
         case .preparing:
             return "Starting…"
-        default:
-            if let resolution, case .fellBack(let device, _, let missingName) = resolution {
-                return "\(missingName ?? "Saved device") disconnected · using \(device.name)"
-            }
-            return nil
+        case .idle, .tearingDown:
+            return wantsRouting ? "Not routing · this level is not being applied" : fallbackNote()
+        case .running:
+            return fallbackNote()
         }
     }
 
     var isDegraded: Bool {
         if case .failed = routeState { return true }
         if case .suspended = routeState { return true }
+        if isSettingIgnored { return true }
         return resolution?.isDegraded ?? false
     }
 }
@@ -65,6 +85,10 @@ final class MixerViewModel: ObservableObject {
 
     @Published private(set) var activeChannels: [MixerChannel] = []
     @Published private(set) var savedChannels: [MixerChannel] = []
+    /// Daemons and bare executables. Real, occasionally useful, almost never
+    /// what somebody opened the mixer for — so they live behind a disclosure.
+    @Published private(set) var systemChannels: [MixerChannel] = []
+    @Published var isShowingSystemProcesses = false
     @Published private(set) var outputDevices: [OutputDeviceSnapshot] = []
     @Published private(set) var permissionStatus: PermissionController.Status = .undetermined
     @Published private(set) var masterVolume: Float = 1
@@ -339,8 +363,10 @@ final class MixerViewModel: ObservableObject {
                                                             rule: rule,
                                                             routeState: status?.state ?? .idle,
                                                             resolution: status?.resolution,
-                                                            isSystemSounds: app.isSystemSounds)
+                                                            isSystemSounds: app.isSystemSounds,
+                                                            kind: app.kind)
             channel.name = app.displayName
+            channel.kind = app.kind
             channel.bundleIdentifier = app.bundleIdentifier
             channel.bundleURL = app.bundleURL
             channel.isProducingOutput = app.isProducingOutput
@@ -380,19 +406,29 @@ final class MixerViewModel: ObservableObject {
     private func publish() {
         let all = channels.values
 
-        activeChannels = all
-            .filter { $0.isRunning && ($0.isProducingOutput || $0.routeState.holdsResources) }
+        func isLive(_ channel: MixerChannel) -> Bool {
+            channel.isRunning && (channel.isProducingOutput || channel.routeState.holdsResources)
+        }
+
+        // Background daemons are separated out first, whatever they are doing.
+        // A dozen of them above Spotify is the reason the list needed scrolling.
+        let foreground = all.filter { $0.kind != .backgroundProcess }
+
+        activeChannels = foreground.filter(isLive).sorted(by: Self.order)
+
+        savedChannels = foreground
+            .filter { !isLive($0) }
+            .filter { $0.isRunning || rules.rule(for: $0.key) != nil }
             .sorted(by: Self.order)
 
-        savedChannels = all
-            .filter { !($0.isRunning && ($0.isProducingOutput || $0.routeState.holdsResources)) }
-            .filter { $0.isRunning || rules.rule(for: $0.key) != nil }
+        systemChannels = all
+            .filter { $0.kind == .backgroundProcess }
             .sorted(by: Self.order)
     }
 
     private static func order(_ lhs: MixerChannel, _ rhs: MixerChannel) -> Bool {
+        if lhs.kind != rhs.kind { return lhs.kind < rhs.kind }
         if lhs.isProducingOutput != rhs.isProducingOutput { return lhs.isProducingOutput }
-        if lhs.isSystemSounds != rhs.isSystemSounds { return !lhs.isSystemSounds }
         return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
     }
 

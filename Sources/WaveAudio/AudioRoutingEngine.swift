@@ -302,6 +302,13 @@ public final class AudioRoutingEngine: @unchecked Sendable {
         route.resolution = resolution
         route.watchdog.reset()
 
+        // Publish .preparing before the Core Audio calls, not after. Creating a
+        // tap and starting IO on it can take a moment — and on a first run it
+        // blocks until the permission prompt is answered — so a row that says
+        // nothing until it is finished is indistinguishable from a fader that
+        // does nothing at all.
+        publish()
+
         guard let controlBlock = RealtimeControlBlock() else {
             route.state = .failed(message: "Could not allocate the render control block.")
             publish()

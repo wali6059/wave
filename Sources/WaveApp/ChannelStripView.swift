@@ -176,7 +176,10 @@ struct ChannelStripView: View {
                               set: { onVolume(Float($0)) }),
                in: 0...1)
             .controlSize(.small)
-            .tint(channel.rule.isMuted ? Color.secondary : Wave.signal)
+            // Not cobalt when the value is going nowhere: the signal colour
+            // means "this is live", and a fader on a dead route is not.
+            .tint(channel.isSettingIgnored ? Wave.overload
+                  : (channel.rule.isMuted ? Color.secondary : Wave.signal))
             .frame(minWidth: 60)
             .accessibilityLabel("Volume for \(channel.name)")
             .accessibilityValue("\(VolumeCurve.percent(forPosition: channel.rule.volume)) percent")
@@ -198,6 +201,7 @@ struct ChannelStripView: View {
 
     private var statusSymbol: String {
         if case .preparing = channel.routeState { return "clock" }
+        if channel.isSettingIgnored { return "exclamationmark.triangle.fill" }
         return "exclamationmark.triangle"
     }
 

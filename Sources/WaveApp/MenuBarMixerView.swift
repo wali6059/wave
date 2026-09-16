@@ -13,6 +13,7 @@ struct MenuBarMixerView: View {
 
     @ObservedObject var model: MixerViewModel
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -45,6 +46,7 @@ struct MenuBarMixerView: View {
                         activeSection
                         savedSection
                     }
+                    systemSection
                 }
                 .padding(.bottom, 6)
             }
@@ -114,6 +116,52 @@ struct MenuBarMixerView: View {
             SectionHeader(title: model.activeChannels.isEmpty ? "Saved and recent" : "Recent and saved")
             ForEach(model.savedChannels) { channel in
                 strip(for: channel)
+            }
+        }
+    }
+
+    /// Daemons, at the end, folded away.
+    ///
+    /// macOS registers a dozen or more background processes as audio sources.
+    /// Listing them inline is what turned this popover into a scrolling list
+    /// and buried the two rows anyone actually opened it for. They stay
+    /// reachable, one click away, and the count is always visible so nothing is
+    /// silently hidden.
+    @ViewBuilder
+    private var systemSection: some View {
+        if !model.systemChannels.isEmpty {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.15)) {
+                    model.isShowingSystemProcesses.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(model.isShowingSystemProcesses ? 90 : 0))
+                    Text("System processes")
+                        .font(Wave.Type_.sectionHeader)
+                    Text("\(model.systemChannels.count)")
+                        .font(Wave.Type_.readout)
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, Wave.Metrics.horizontalPadding)
+            .padding(.top, Wave.Metrics.sectionSpacing)
+            .padding(.bottom, 4)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityLabel("System processes, \(model.systemChannels.count)")
+            .accessibilityValue(model.isShowingSystemProcesses ? "Expanded" : "Collapsed")
+            .help("Background daemons macOS registers as audio sources")
+
+            if model.isShowingSystemProcesses {
+                ForEach(model.systemChannels) { channel in
+                    strip(for: channel)
+                }
             }
         }
     }

@@ -66,13 +66,15 @@ enum Wave {
         /// The popover reads best around here: wide enough for a name, a meter
         /// and a fader on two lines without either wrapping or floating.
         static let popoverWidth: CGFloat = 420
-        static let maxPopoverHeight: CGFloat = 620
+        static let maxPopoverHeight: CGFloat = 660
 
         static let horizontalPadding: CGFloat = 14
-        static let rowVerticalPadding: CGFloat = 9
+        /// Tight on purpose. Every point here is multiplied by the number of
+        /// rows, and the popover's job is to show them all at once.
+        static let rowVerticalPadding: CGFloat = 6
         static let rowCornerRadius: CGFloat = 6
 
-        static let iconSize: CGFloat = 26
+        static let iconSize: CGFloat = 24
         /// Gap between the icon and the name. Icon + gap is also the indent for
         /// the second line, which is what makes the two lines of a strip read
         /// as one block.
@@ -86,7 +88,7 @@ enum Wave {
 
         static let controlHeight: CGFloat = 20
         static let percentWidth: CGFloat = 36
-        static let sectionSpacing: CGFloat = 10
+        static let sectionSpacing: CGFloat = 8
     }
 
     // MARK: - Type

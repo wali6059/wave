@@ -8,6 +8,26 @@ import WaveCore
 /// One application as the mixer presents it: a friendly name, an icon, and the
 /// set of Core Audio process objects whose audio belongs to it.
 public struct DiscoveredApp: Equatable, Sendable, Identifiable {
+
+    /// What kind of thing this row represents.
+    ///
+    /// macOS registers a dozen or more background daemons as audio processes —
+    /// `corespeechd`, `universalaccessd`, `systemstats` and friends. Listing
+    /// them beside Spotify buries the two rows anyone actually came for, so the
+    /// mixer sorts and sections by this.
+    public enum Kind: Int, Equatable, Sendable, Comparable {
+        /// Something with a Dock icon and a bundle: Spotify, Chrome, FaceTime.
+        case application = 0
+        /// The aggregate of system and interface sounds.
+        case systemSounds = 1
+        /// A daemon or bare executable. Real, occasionally useful, rarely what
+        /// you are looking for.
+        case backgroundProcess = 2
+
+        public static func < (lhs: Kind, rhs: Kind) -> Bool { lhs.rawValue < rhs.rawValue }
+    }
+
+    public var kind: Kind
     public var key: AppGroupKey
     public var displayName: String
     public var bundleIdentifier: String?
@@ -189,7 +209,20 @@ public final class AudioProcessDiscovery: @unchecked Sendable {
                                                                         members: members,
                                                                         applicationsByPID: applicationsByPID)
 
-            apps.append(DiscoveredApp(key: key,
+            let kind: DiscoveredApp.Kind
+            if key.isSystemSounds {
+                kind = .systemSounds
+            } else if members.contains(where: { applicationsByPID[$0.pid] != nil })
+                        || bundleURL?.pathExtension == "app" {
+                // Either macOS considers it a running application, or it lives
+                // in an .app wrapper. Both mean a person would call it an app.
+                kind = .application
+            } else {
+                kind = .backgroundProcess
+            }
+
+            apps.append(DiscoveredApp(kind: kind,
+                                      key: key,
                                       displayName: name,
                                       bundleIdentifier: bundleIdentifier,
                                       bundleURL: bundleURL,
@@ -199,9 +232,11 @@ public final class AudioProcessDiscovery: @unchecked Sendable {
                                       isSystemSounds: key.isSystemSounds))
         }
 
+        // Applications first, then system sounds, then daemons; within each
+        // band, whatever is making noise floats to the top.
         apps.sort { lhs, rhs in
+            if lhs.kind != rhs.kind { return lhs.kind < rhs.kind }
             if lhs.isProducingOutput != rhs.isProducingOutput { return lhs.isProducingOutput }
-            if lhs.isSystemSounds != rhs.isSystemSounds { return !lhs.isSystemSounds }
             return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
         }
 
