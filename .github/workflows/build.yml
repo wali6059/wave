@@ -82,19 +82,28 @@ jobs:
             exit 1
           fi
 
-      # The structural half of the audio chain does not need a listener: either
-      # the tap and the private aggregate can be created and the IO callback
-      # fires, or they cannot. That is the riskiest code in the project and it
-      # is checkable on a headless runner. Silence is expected here (no TCC
-      # grant, no real hardware) and is reported rather than failed; a callback
-      # that never fires is a failure.
-      - name: Self-test the Core Audio chain
+      # Creating the tap, building the private aggregate device around it, and
+      # negotiating a render format are the riskiest calls in the project, and
+      # they need no listener - so they are asserted here on every push.
+      #
+      # Starting IO is deliberately NOT attempted. That call is where macOS
+      # decides whether this process may receive tapped audio, and on a runner
+      # with no logged-in session there is nobody to answer the prompt, so it
+      # blocks indefinitely. Proving that the graph builds and tears down
+      # cleanly is what this environment can honestly establish; the rest is in
+      # docs/ACCEPTANCE.md and needs a person at a Mac.
+      - name: Self-test the Core Audio graph
         run: |
           set +e
           perl -e 'alarm shift; exec @ARGV' 60 \
-            ./build/Wave.app/Contents/MacOS/wave-spike selftest --seconds 6
+            ./build/Wave.app/Contents/MacOS/wave-spike selftest --graph-only
           status=$?
           echo "exit status: $status"
+          # 142 is SIGALRM.
+          if [ $status -eq 142 ]; then
+            echo "The graph self-test hung, which it should never do: no call it"
+            echo "makes requires a permission decision."
+          fi
           exit $status
 
       - name: Confirm the usage description survived into the bundle

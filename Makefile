@@ -55,6 +55,10 @@ spike: app ## Prove the capture -> gain -> output chain. APP=<name> [DEVICE=<nam
 selftest: app ## Exercise tap -> aggregate -> IO proc -> teardown, no listening required
 	@$(SPIKE) selftest --seconds $(or $(SECONDS),6)
 
+.PHONY: selftest-graph
+selftest-graph: app ## Tap and aggregate only; stops before anything needing permission
+	@$(SPIKE) selftest --graph-only
+
 .PHONY: verify
 verify: ## Full check: strict build, tests, then the audio spike instructions
 	@echo "==> Strict build"

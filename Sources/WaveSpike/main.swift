@@ -77,6 +77,7 @@ struct Arguments {
     var seconds: Double = 30
     var sweep = true
     var mute = false
+    var graphOnly = false
 
     static func parse(_ raw: [String]) -> Arguments {
         var arguments = Arguments()
@@ -98,6 +99,7 @@ struct Arguments {
             case "--volume": arguments.volume = Float(value() ?? "1") ?? 1
             case "--seconds": arguments.seconds = Double(value() ?? "30") ?? 30
             case "--no-sweep": arguments.sweep = false
+            case "--graph-only": arguments.graphOnly = true
             case "--mute": arguments.mute = true
             case "--help", "-h": arguments.command = "help"
             default: break
@@ -130,7 +132,9 @@ func printUsage() {
           list                       Show audio processes and output devices
           permission                 Report system audio recording status
           selftest                   Exercise tap -> aggregate -> IO proc -> teardown
-                                     without needing anyone to listen
+                                     without needing anyone to listen.
+                                     --graph-only stops before starting IO, which
+                                     is the part that needs a permission decision.
           route --app <name>         Capture one app, apply gain, render to a device
           help
 
@@ -432,8 +436,33 @@ func commandSelfTest(_ arguments: Arguments) {
     controlBlock.isActive = true
     controlBlock.targetGain = GainResolver.targetGain(position: 0.5, isMuted: false)
 
+    if arguments.graphOnly {
+        out()
+        out("-> AudioHardwareDestroyAggregateDevice + AudioHardwareDestroyProcessTap")
+        tapController.tearDown()
+        controlBlock.dispose()
+        devices.stop()
+        processes.stop()
+
+        out()
+        out("Results (graph only)")
+        out("  tap created            : yes  (#\(prepared.tapID))")
+        out("  aggregate created      : yes  (#\(prepared.aggregateDeviceID))")
+        out("  render plan resolved   : yes  (\(prepared.plan.input.channelCount)ch -> "
+            + "\(prepared.plan.output.channelCount)ch @ \(Int(prepared.plan.output.sampleRate)) Hz)")
+        out("  teardown completed     : yes")
+        out()
+        out("VERDICT: the tap and its private aggregate device were created, agreed")
+        out("         on a format, and were released cleanly. Starting IO was not")
+        out("         attempted; that is the part that needs a permission decision.")
+        return
+    }
+
     out()
     out("-> AudioDeviceCreateIOProcIDWithBlock")
+    out("   NOTE: on a machine with no logged-in session this can block, because")
+    out("   it is where macOS decides whether this process may receive tapped")
+    out("   audio and there is nobody to answer the prompt.")
     do {
         let renderer = try RealtimeRenderer(deviceID: prepared.aggregateDeviceID,
                                             plan: prepared.plan,
