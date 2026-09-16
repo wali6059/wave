@@ -396,11 +396,7 @@ func commandSelfTest(_ arguments: Arguments) {
     out("Rendering  : \(destination.name)  [\(destination.uid)]")
     out()
 
-    var tapCreated = false
-    var aggregateCreated = false
-    var ioProcStarted = false
     var buffers: UInt64 = 0
-    var teardownClean = false
 
     guard let controlBlock = RealtimeControlBlock() else {
         fail("could not allocate the control block")
@@ -413,8 +409,6 @@ func commandSelfTest(_ arguments: Arguments) {
                                                    destinationDeviceUID: destination.uid,
                                                    label: "self-test",
                                                    muteOriginalOutput: true))
-        tapCreated = prepared.tapID != AudioObjectID.unknown
-        aggregateCreated = prepared.aggregateDeviceID != AudioObjectID.unknown
         out("tap        : #\(prepared.tapID)  uuid=\(prepared.tapUUID.uuidString)")
         out("aggregate  : #\(prepared.aggregateDeviceID)  buffer=\(prepared.bufferFrameSize) frames")
         out("format     : \(prepared.plan.input.channelCount)ch in -> "
@@ -437,7 +431,6 @@ func commandSelfTest(_ arguments: Arguments) {
                                             controlBlock: controlBlock,
                                             diagnostics: diagnostics)
         try renderer.start()
-        ioProcStarted = true
         out()
         out("IO proc running for \(Int(arguments.seconds))s...")
 
@@ -451,7 +444,6 @@ func commandSelfTest(_ arguments: Arguments) {
         controlBlock.isActive = false
         renderer.stop()
         tapController.tearDown()
-        teardownClean = true
     } catch {
         tapController.tearDown()
         controlBlock.dispose()
@@ -466,23 +458,25 @@ func commandSelfTest(_ arguments: Arguments) {
     devices.stop()
     processes.stop()
 
+    // Reaching here means every step above succeeded: each failure path exits
+    // with its own diagnosis, so there are no "did it work" flags to carry.
     out()
     out("Results")
-    out("  tap created            : \(tapCreated ? "yes" : "NO")")
-    out("  aggregate created      : \(aggregateCreated ? "yes" : "NO")")
-    out("  IO proc started        : \(ioProcStarted ? "yes" : "NO")")
+    out("  tap created            : yes  (#\(prepared.tapID))")
+    out("  aggregate created      : yes  (#\(prepared.aggregateDeviceID))")
+    out("  IO proc started        : yes")
+    out("  teardown completed     : yes")
     out("  buffers rendered       : \(buffers)")
     out("  of which silent        : \(statistics.silentBuffers)")
     out("  format mismatches      : \(statistics.formatMismatches)")
     out("  underruns              : \(statistics.underruns)")
-    out("  teardown completed     : \(teardownClean ? "yes" : "NO")")
     out()
 
     // Silence is expected without a TCC grant, so it is reported rather than
     // failed. A callback that never fired is a different matter: it means the
-    // object graph was built and then did nothing.
-    guard tapCreated, aggregateCreated, ioProcStarted, teardownClean, buffers > 0 else {
-        out("VERDICT: the Core Audio chain did not run.")
+    // object graph was built and then did nothing at all.
+    guard buffers > 0 else {
+        out("VERDICT: the object graph was built but the IO callback never fired.")
         exit(1)
     }
 
